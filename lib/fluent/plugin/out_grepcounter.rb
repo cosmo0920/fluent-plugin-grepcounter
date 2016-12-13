@@ -4,7 +4,7 @@ require 'fluent/plugin/output'
 
 class Fluent::Plugin::GrepCounterOutput < Fluent::Plugin::Output
   Fluent::Plugin.register_output('grepcounter', self)
-  helpers :event_emitter
+  helpers :event_emitter, :timer
 
   # To support log_level option implemented by Fluentd v0.10.43
   unless method_defined?(:log)
@@ -165,14 +165,14 @@ DESC
   def start
     super
     load_status(@store_file, @count_interval) if @store_file
-    @watcher = Thread.new(&method(:watcher))
+    # instance variable, and public accessable, for test
+    @last_checked ||= Fluent::Engine.now
+    timer_execute(:out_grepcounter_timer, 0.5, &method(:watcher))
   end
 
   def shutdown
-    super
-    @watcher.terminate
-    @watcher.join
     save_status(@store_file) if @store_file
+    super
   end
 
   # Called when new line comes. This method actually does not emit
@@ -213,19 +213,14 @@ DESC
 
   # thread callback
   def watcher
-    # instance variable, and public accessable, for test
-    @last_checked ||= Fluent::Engine.now
-    while true
-      sleep 0.5
-      begin
-        if Fluent::Engine.now - @last_checked >= @count_interval
-          now = Fluent::Engine.now
-          flush_emit(now - @last_checked)
-          @last_checked = now
-        end
-      rescue => e
-        log.warn "grepcounter: #{e.class} #{e.message} #{e.backtrace.first}"
+    begin
+      if Fluent::Engine.now - @last_checked >= @count_interval
+        now = Fluent::Engine.now
+        flush_emit(now - @last_checked)
+        @last_checked = now
       end
+    rescue => e
+      log.warn "grepcounter: #{e.class} #{e.message} #{e.backtrace.first}"
     end
   end
 
